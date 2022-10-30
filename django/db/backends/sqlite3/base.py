@@ -6,6 +6,7 @@ import decimal
 import warnings
 from itertools import chain
 from sqlite3 import dbapi2 as Database
+import re
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError
@@ -373,4 +374,5 @@ class SQLiteCursorWrapper(Database.Cursor):
         return Database.Cursor.executemany(self, query, param_list)
 
     def convert_query(self, query):
+        query = re.sub("\)s", "", re.sub("%\(", ":", query))
         return FORMAT_QMARK_REGEX.sub("?", query).replace("%%", "%")
