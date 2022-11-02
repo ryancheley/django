@@ -3,7 +3,6 @@ SQLite backend for the sqlite3 module in the standard library.
 """
 import datetime
 import decimal
-import re
 import warnings
 from itertools import chain
 from sqlite3 import dbapi2 as Database
@@ -366,6 +365,9 @@ class SQLiteCursorWrapper(Database.Cursor):
     def execute(self, query, params=None):
         if params is None:
             return Database.Cursor.execute(self, query)
+        if hasattr(params, "keys"):
+            args = {k: ":%s" % k for k in params}
+            query = query % args
         query = self.convert_query(query)
         return Database.Cursor.execute(self, query, params)
 
@@ -374,5 +376,4 @@ class SQLiteCursorWrapper(Database.Cursor):
         return Database.Cursor.executemany(self, query, param_list)
 
     def convert_query(self, query):
-        query = re.sub(r"\)s", "", re.sub(r"%\(", ":", query))
         return FORMAT_QMARK_REGEX.sub("?", query).replace("%%", "%")
