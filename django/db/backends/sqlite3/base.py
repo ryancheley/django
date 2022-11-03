@@ -367,14 +367,20 @@ class SQLiteCursorWrapper(Database.Cursor):
             return Database.Cursor.execute(self, query)
         if hasattr(params, "keys"):
             args = {k: ":%s" % k for k in params}
-            query %= args
+            query = query % args
         query = self.convert_query(query)
         return Database.Cursor.execute(self, query, params)
 
     def executemany(self, query, param_list):
+        # breakpoint()
         param_list = [p for p in param_list]
-        args = {k: ":%s" % k for k in param_list[0]}
-        query %= args
+        try:
+            if hasattr(param_list[0], "keys"):
+                args = {k: ":%s" % k for k in param_list[0]}
+                query = query % args
+        except IndexError:
+            pass
+        
         query = self.convert_query(query)
         return Database.Cursor.executemany(self, query, param_list)
 
