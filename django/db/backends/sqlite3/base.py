@@ -4,7 +4,8 @@ SQLite backend for the sqlite3 module in the standard library.
 import datetime
 import decimal
 import warnings
-from itertools import chain
+from collections.abc import Mapping
+from itertools import chain, tee
 from sqlite3 import dbapi2 as Database
 
 from django.core.exceptions import ImproperlyConfigured
@@ -357,32 +358,51 @@ FORMAT_QMARK_REGEX = _lazy_re_compile(r"(?<!%)%s")
 
 class SQLiteCursorWrapper(Database.Cursor):
     """
-    Django uses "format" style placeholders, but pysqlite2 uses "qmark" style.
-    This fixes it -- but note that if you want to use a literal "%s" in a query,
-    you'll need to use "%%s".
+    Django uses the `format` and, if supported by the backend, `pyformat` paramstyle.
+    Python's `sqlite3` module supports neither of these parameter placeholder styles.
+
+    This wrapper can perform the following conversions to provide compatibility:
+
+    - Converts `format` paramstyle to `qmark` paramstyle
+    - Converts `pyformat` paramstyle to `named` paramstyle
+
+    In both cases, if you want to use a literal `%s`, you'll need to use `%%s`.
+
+    See the following links for more details:
+
+    - https://docs.python.org/3/library/sqlite3.html#sqlite3.paramstyle
+    - https://peps.python.org/pep-0249/#paramstyle
+    - https://www.sqlite.org/lang_expr.html#parameters
     """
 
     def execute(self, query, params=None):
         if params is None:
             return Database.Cursor.execute(self, query)
-        if hasattr(params, "keys"):
-            args = {k: ":%s" % k for k in params}
-            query = query % args
-        query = self.convert_query(query)
+
+        # Extract names if params is a mapping, i.e. we're using `pyformat` paramstyle.
+        names = list(params) if isinstance(params, Mapping) else None
+
+        query = self.convert_query(query, names=names)
         return Database.Cursor.execute(self, query, params)
 
     def executemany(self, query, param_list):
-        # breakpoint()
-        param_list = [p for p in param_list]
-        try:
-            if hasattr(param_list[0], "keys"):
-                args = {k: ":%s" % k for k in param_list[0]}
-                query = query % args
-        except IndexError:
-            pass
-        
-        query = self.convert_query(query)
+        # Extract names if params is a mapping, i.e. we're using `pyformat` paramstyle.
+        # We need to peek carefully as we could be passed a generator instead of a list.
+        peekable, param_list = tee(iter(param_list))
+        if (params := next(peekable, None)) and isinstance(params, Mapping):
+            names = list(params)
+        else:
+            names = None
+
+        query = self.convert_query(query, names=names)
         return Database.Cursor.executemany(self, query, param_list)
 
-    def convert_query(self, query):
-        return FORMAT_QMARK_REGEX.sub("?", query).replace("%%", "%")
+    def convert_query(self, query, *, names=None):
+        if names is None:
+            # Convert from `format` paramstyle to `qmark` paramstyle.
+            # If a literal `%s` is required it must be escaped as `%%s`.
+            return FORMAT_QMARK_REGEX.sub("?", query).replace("%%", "%")
+        else:
+            # Convert from `pyformat` paramstyle to `named` paramstyle.
+            # This is conveniently consistent - it also converts `%%s` to `%s`.
+            return query % {name: f":{name}" for name in names}
